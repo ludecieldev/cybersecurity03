@@ -1,0 +1,4 @@
+# course documents stay local
+*.pdf
+SPEC.md
+__pycache__/
