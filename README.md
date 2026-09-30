@@ -2,14 +2,29 @@
 
 This folder has everything for the live part of our presentation:
 - **`attack_simulation.py`** and **`secure_solution.py`**: our Python code from the answer sheet, which we run live.
-- **`index.html`**: a visualization of the same logic. It shows the attack succeeding against the vulnerable system, then the **same** attack failing against our secure solution.
+- **`index.html`** (with `css/` and `js/`): a visualization of the same logic. It shows the attack succeeding against the vulnerable system, then the **same** attack failing against our secure solution.
 
 Everything is a local simulation with fictional data. The page makes no network requests.
 
 ## Launch
 
 - **Python:** `python3 attack_simulation.py`, then `python3 secure_solution.py`.
-- **Page:** double-click `index.html`. It opens in Chrome, Edge or Firefox with no install, internet access, or server. Press **F11** for full screen. The layout fits 1920×1080 and 1280×720.
+- **Page:** double-click `index.html`. It opens in Chrome, Edge or Firefox with no install, internet access, or server. Copy the whole folder to the presentation PC: the page needs `css/` and `js/` next to it. Press **F11** for full screen. The layout fits 1920×1080 and 1280×720.
+
+## Files
+
+| File | What it is |
+|---|---|
+| `index.html` | Page markup only |
+| `css/style.css` | Dark, projector-friendly theme |
+| `js/core.js` | Port of `secure_solution.py`: the five checks, SHA-256, audit log. No DOM, so the tests load it directly. |
+| `js/map.js` | Top-down map and altitude gauge (SVG) |
+| `js/app.js` | Stages, scenarios, gate animation, keyboard |
+| `js/python-sources.js` | **Generated.** Our Python for the code panel (key K) |
+| `tools/embed_python.py` | Regenerates `js/python-sources.js` |
+| `tests/core.test.js` | Checks the page logic against the Python |
+
+The scripts are plain `<script>` tags, not ES modules. Browsers block modules on a double-clicked (`file://`) page, and this page has to work without a server.
 
 ## Run order (follows the Presentation Guide, sections 2 and 27)
 
@@ -69,7 +84,7 @@ Lines marked `# [guide]` were added. Everything else is the answer-sheet code un
 - Before the original asserts, it replays the **same** attack: same stolen `operator` account, same two changes. It then prints ATTACK BLOCKED (guide section 19).
 - At the end, it prints the numbered security log (guide section 21).
 
-If you edit either `.py` file, run `python3 tools/embed_python.py` so the page's code panel shows the new version.
+If you edit either `.py` file, run `python3 tools/embed_python.py` to regenerate `js/python-sources.js`, so the page's code panel shows the new version. The tests fail if you forget.
 
 ## Checking
 

@@ -1,4 +1,4 @@
-// Checks the logic inside index.html against the SPEC acceptance checks.
+// Checks js/core.js (the page's logic) against the SPEC acceptance checks and our Python.
 // Run: node tests/core.test.js   (needs Node 18+ and python3 for the reference hashes)
 "use strict";
 const fs = require("fs");
@@ -6,9 +6,8 @@ const path = require("path");
 const { execFileSync } = require("child_process");
 const assert = require("assert");
 
-const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
-const src = html.match(/<script id="core">([\s\S]*?)<\/script>/)[1];
-const Core = new Function("module", src + "\nreturn UAVCore;")({});
+const ROOT = path.join(__dirname, "..");
+const Core = require(path.join(ROOT, "js", "core.js"));
 
 function python(code, input) {
   return execFileSync("python3", ["-c", code], { input: JSON.stringify(input) }).toString();
@@ -165,16 +164,17 @@ async function check(name, fn) {
   });
 
   await check("code panel shows exactly the .py files", () => {
+    const win = {};
+    new Function("window", fs.readFileSync(path.join(ROOT, "js", "python-sources.js"), "utf8"))(win);
     for (const name of ["attack_simulation", "secure_solution"]) {
-      const re = new RegExp(`<script type="text/plain" id="py-${name}">\\n([\\s\\S]*?)</script>`);
-      const embedded = html.match(re)[1];
-      const file = fs.readFileSync(path.join(__dirname, "..", name + ".py"), "utf8").trimEnd() + "\n";
+      const embedded = win.PY_SOURCES[name];
+      const file = fs.readFileSync(path.join(ROOT, name + ".py"), "utf8").trimEnd() + "\n";
       assert.strictEqual(embedded, file, `${name}.py changed: run python3 tools/embed_python.py`);
     }
   });
 
   await check("attack_simulation.py reports success; secure_solution.py blocks the same attack", () => {
-    const root = path.join(__dirname, "..");
+    const root = ROOT;
     const a = execFileSync("python3", ["attack_simulation.py"], { cwd: root }).toString();
     assert.match(a, /^ATTACK SUCCESSFUL$/m);
     const b = execFileSync("python3", ["secure_solution.py"], { cwd: root }).toString();
