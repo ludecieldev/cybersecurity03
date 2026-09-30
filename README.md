@@ -17,9 +17,11 @@ Everything is a local simulation with fictional data. The page makes no network 
 |---|---|
 | `index.html` | Page markup only |
 | `css/style.css` | Dark, projector-friendly theme |
-| `js/core.js` | Port of `secure_solution.py`: the five checks, SHA-256, audit log. No DOM, so the tests load it directly. |
+| `js/core.js` | Ports of `secure_solution.py` (five checks, SHA-256, audit log) and `attack_simulation.py`. No DOM, so the tests load it directly. |
+| `js/content.js` | **All wording:** stage texts, scenarios 1–7, captions, and which Python lines to highlight. Edit text here. |
+| `js/ui.js` | HTML helpers: gates, mission file, audit log, hashes, tables |
 | `js/map.js` | Top-down map and altitude gauge (SVG) |
-| `js/app.js` | Stages, scenarios, gate animation, keyboard |
+| `js/app.js` | Flow only: modes, stepping, animation queue, controls, keyboard |
 | `js/python-sources.js` | **Generated.** Our Python for the code panel (key K) |
 | `tools/embed_python.py` | Regenerates `js/python-sources.js` |
 | `tests/core.test.js` | Checks the page logic against the Python |
@@ -93,7 +95,10 @@ node tests/core.test.js
 ```
 
 Needs Node 18+ and python3. The test checks:
-- The page's logic against `secure_solution.py`: check order, audit events, and SHA-256 over `json.dumps(mission, sort_keys=True)`, compared byte-for-byte with Python.
+- The page's logic against **running** our Python:
+  - `attack_simulation.py`: same credentials, mission, changes and verdict.
+  - `secure_solution.py`: the same calls produce the identical audit log and failure counters.
+  - SHA-256 over `json.dumps(mission, sort_keys=True)`, compared byte-for-byte.
 - The spec's acceptance asserts.
 - That the same attack is blocked at the account gate.
 - That the embedded code matches the `.py` files.

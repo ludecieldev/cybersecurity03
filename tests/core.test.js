@@ -181,6 +181,44 @@ async function check(name, fn) {
     assert.match(b, /^ATTACK BLOCKED$/m);
   });
 
+  // Run a .py file quietly and return some of its globals as JSON (tuples become lists).
+  function pyGlobals(file, expr) {
+    return JSON.parse(execFileSync("python3", ["-c",
+      "import contextlib, io, json, runpy, sys\n" +
+      "with contextlib.redirect_stdout(io.StringIO()):\n" +
+      "    g = runpy.run_path(sys.argv[1])\n" +
+      "print(json.dumps(" + expr + "))", path.join(ROOT, file)]).toString());
+  }
+
+  await check("vulnerable logic matches running attack_simulation.py", () => {
+    const py = pyGlobals("attack_simulation.py",
+      "{'shared_accounts': g['shared_accounts'], 'user': g['user'], 'password': g['password'], 'authenticated': g['authenticated'], " +
+      "'mission': g['mission'], 'changed': g['changed'], 'attack_successful': g['attack_successful']}");
+    const js = Core.runVulnerableAttack();
+    assert.deepStrictEqual(Core.SHARED_ACCOUNTS, py.shared_accounts);
+    assert.deepStrictEqual([Core.ATTACKER.user, Core.ATTACKER.password], [py.user, py.password]);
+    assert.strictEqual(js.authenticated, py.authenticated);
+    assert.deepStrictEqual(js.mission, py.mission);
+    assert.deepStrictEqual(js.changed, py.changed);
+    assert.strictEqual(js.attack_successful, py.attack_successful);
+  });
+
+  await check("secure logic reproduces the audit log of running secure_solution.py", async () => {
+    const py = pyGlobals("secure_solution.py", "{'log': [list(e[1:]) for e in g['audit_log']], 'failures': g['failures']}");
+    // the same calls, in the same order, as secure_solution.py
+    const s = Core.createSecureSystem(); await s.ready;
+    const A = Core.ATTACKER;
+    await s.change(A.user, A.password, A.mfa, "destination", "UNKNOWN_POINT");
+    await s.change(A.user, A.password, A.mfa, "altitude", 30);
+    await s.change("intruder", "wrong", "000000", "destination", "UNKNOWN_POINT");
+    await s.change("pilot01", "pilot-pass", "246810", "destination", "POINT_B");
+    await s.verify();
+    s.mission.altitude = 30;
+    await s.verify();
+    assert.deepStrictEqual(s.audit_log.map(e => e.slice(1)), py.log);
+    assert.deepStrictEqual(s.failures, py.failures);
+  });
+
   await check("Python repr for log details", () => {
     assert.strictEqual(Core.pyRepr(["destination", "POINT_A", "POINT_B"]), "('destination', 'POINT_A', 'POINT_B')");
     assert.strictEqual(Core.pyRepr(["altitude", 100, 30]), "('altitude', 100, 30)");

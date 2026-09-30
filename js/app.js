@@ -1,18 +1,21 @@
 /* ==========================================================================
-   PRESENTATION LAYER. Everything is deterministic: fixed timings, no random.
+   PRESENTATION FLOW: modes, stages, scenarios, animation queue, controls.
+   Wording lives in js/content.js, HTML helpers in js/ui.js, logic in js/core.js.
+   Everything is deterministic: fixed timings, no random.
    ========================================================================== */
 (function () {
   "use strict";
   var C = UAVCore;
   var INITIAL = C.INITIAL_MISSION;
-  var GATE_MS = 420;
 
-  function $(id) { return document.getElementById(id); }
-  function esc(s) {
-    return String(s).replace(/[&<>"']/g, function (c) {
-      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
-    });
-  }
+  var UI = UAVUI, K = UAVContent;
+  var $ = UI.$, esc = UI.esc, GATE_MS = UI.GATE_MS, GATES = UI.GATES, buildGates = UI.buildGates, setGate = UI.setGate,
+      gatesIdle = UI.gatesIdle, gatesAbsent = UI.gatesAbsent, gatesBypassed = UI.gatesBypassed, failText = UI.failText,
+      pyArg = UI.pyArg, callHtml = UI.callHtml, requestHtml = UI.requestHtml, renderMission = UI.renderMission,
+      renderLog = UI.renderLog, renderCounters = UI.renderCounters, renderHash = UI.renderHash,
+      rowsTable = UI.rowsTable, changesText = UI.changesText, outcomeTable = UI.outcomeTable;
+  var CONTEXT = K.CONTEXT, VSTAGES = K.VSTAGES, PRESETS = K.PRESETS, SHORT = K.SHORT, GATE_CODE = K.GATE_CODE, SPLIT_CAP = K.SPLIT_CAP;
+
   function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   function assign(a, b) { var o = C.copy(a); for (var k in b) o[k] = b[k]; return o; }
 
@@ -35,152 +38,10 @@
   var P = UAVMap.P, MID = UAVMap.MID, CRASH = UAVMap.CRASH, lerp = UAVMap.lerp, placeOf = UAVMap.placeOf;
   function MapView(host, statusEl) { return UAVMap.MapView(host, statusEl, function () { return hurry; }); }
 
-  /* ======================= GATES ======================= */
-  var GATES = [
-    { name: "Network rule", sub: "source → mission_data allowed?", absent: "no segmentation: any laptop reaches mission data" },
-    { name: "Account", sub: "exists · active · not locked", absent: "shared account · old accounts active · no lockout" },
-    { name: "Password + MFA", sub: "both factors must match", absent: "one shared password · no MFA" },
-    { name: "RBAC", sub: "may this role change this field?", absent: "no authorization check" },
-    { name: "Integrity", sub: "SHA-256 vs trusted hash", absent: "no integrity check · no audit log" }
-  ];
-  function buildGates(el) {
-    el.innerHTML = GATES.map(function (g, i) {
-      return '<div class="gate" data-n="' + (i + 1) + '"><div class="num">' + (i + 1) + '</div>' +
-        '<div><div class="name">' + g.name + '</div><div class="why"></div></div><div class="badge"></div></div>';
-    }).join("");
-  }
-  function setGate(el, n, state, why, badge) {
-    var g = el.querySelector('[data-n="' + n + '"]');
-    g.className = "gate " + (state || "");
-    g.querySelector(".why").textContent = why == null ? GATES[n - 1].sub : why;
-    g.querySelector(".badge").textContent = badge || "";
-    g.title = g.querySelector(".why").textContent;
-  }
-  function gatesIdle(el) { for (var n = 1; n <= 5; n++) setGate(el, n, "", null, ""); }
-  function gatesAbsent(el) { for (var n = 1; n <= 5; n++) setGate(el, n, "absent", GATES[n - 1].absent, "MISSING"); }
-
-  function roleOf(user) { return Object.prototype.hasOwnProperty.call(C.USERS, user) ? C.USERS[user][2] : null; }
-  function passText(tr, n) {
-    switch (n) {
-      case 1: return tr.source + " → mission_data: allowed";
-      case 2: return tr.user + ": active, " + tr.failuresBefore + "/3 failed attempts";
-      case 3: return "password and MFA code correct · counter reset to 0";
-      case 4: return "role " + roleOf(tr.user) + " may change " + tr.field;
-      case 5: return "mission hash matches trusted hash";
-    }
-  }
-  function failText(tr, n) {
-    switch (n) {
-      case 1: return tr.source + " → mission_data is not in allowed_paths (default deny)";
-      case 2:
-        if (tr.detail === "unknown account" && tr.user === "operator") return '"operator" does not exist: the shared account was removed';
-        if (tr.detail === "unknown account") return 'no account named "' + tr.user + '"';
-        if (tr.detail === "account disabled") return '"' + tr.user + '" is a disabled old account';
-        return '"' + tr.user + '" is locked after ' + tr.failuresBefore + " failed attempts";
-      case 3: return "wrong password or MFA · failure " + tr.failures + "/3" + (tr.failures >= 3 ? " → account LOCKED" : "");
-      case 4: return "role " + tr.role + " may not change " + tr.field + " (least privilege)";
-      case 5: return "hash ≠ trusted hash → SECURITY ALERT: MISSION REJECTED";
-    }
-  }
-  // walk a change() trace through the gates, one at a time
-  function animateGates(el, tr, t) {
-    gatesIdle(el);
-    var n = 1;
-    function step() {
-      if (n > 5) return Promise.resolve();
-      setGate(el, n, "checking", "checking…", "…");
-      return pause(GATE_MS, t).then(function () {
-        if (tr.stoppedAt === n) {
-          setGate(el, n, "fail", failText(tr, n), "DENIED");
-          for (var m = n + 1; m <= 5; m++) setGate(el, m, "skipped", "not reached", "");
-          return;
-        }
-        setGate(el, n, "pass", passText(tr, n), "PASS");
-        n++;
-        return step();
-      });
-    }
-    return step();
-  }
-  function gatesBypassed(el) {
-    for (var n = 1; n <= 4; n++) setGate(el, n, "bypass", "bypassed: the edit did not go through change()", "BYPASSED");
-  }
-
-  /* ======================= SHARED RENDERERS ======================= */
-  function pyArg(v) { return typeof v === "number" ? '<span class="n">' + v + '</span>' : '<span class="s">' + esc(JSON.stringify(String(v))) + '</span>'; }
-  function callHtml(args) {
-    var a = args.slice(0, 5).map(pyArg).join(", ");
-    if (args[5] !== undefined && args[5] !== "operator") a += ', source=' + pyArg(args[5]);
-    return '<span class="fn">change</span>(' + a + ')';
-  }
-  function requestHtml(label, code) { return '<span class="lbl">' + label + '</span>' + code; }
-
-  var ORDER = ["destination", "altitude", "speed"];
-  function renderMission(el, mission, ann, blocked) {
-    ann = ann || {};
-    var keys = ORDER.filter(function (k) { return k in mission; })
-      .concat(Object.keys(mission).filter(function (k) { return ORDER.indexOf(k) < 0; }));
-    var lines = keys.map(function (k, i) {
-      var a = ann[k], note = "";
-      if (a) note += '<span class="was ' + a.tone + '">was ' + esc(C.pyDumps(a.was)) + (a.note ? " · " + esc(a.note) : "") + "</span>";
-      if (blocked && blocked.field === k) note += '<span class="blk">✖ <s>' + esc(C.pyDumps(blocked.value)) + "</s> blocked</span>";
-      return '<div class="ml' + (a ? " chg " + a.tone : "") + '">  <span class="k">' + esc(JSON.stringify(k)) + '</span>: <span class="v">' +
-        esc(C.pyDumps(mission[k])) + "</span>" + (i < keys.length - 1 ? "," : "") + note + "</div>";
-    });
-    if (blocked && !(blocked.field in mission)) {
-      lines.push('<div class="ml"><span class="blk">✖ new field ' + esc(JSON.stringify(blocked.field)) + " blocked</span></div>");
-    }
-    el.innerHTML = '<div class="ml">mission = {</div>' + lines.join("") + '<div class="ml">}</div>';
-  }
-
-  function evClass(e) {
-    if (e[2] === "denied") return "bad";
-    if (e[2] === "changed") return "ok";
-    if (e[2] === "integrity_check") return e[3] ? "ev-chk" : "bad";
-    return "";
-  }
-  function renderLog(el, log, fresh) {
-    if (!log.length) { el.innerHTML = '<div class="empty" style="color:var(--dim)">No events yet.</div>'; return; }
-    el.innerHTML = log.map(function (e, i) {
-      return '<div class="ev ' + evClass(e) + (i >= fresh ? " new" : "") + '">(<span class="ts">' + esc(C.pyRepr(e[0])) +
-        '</span>, <span class="u">' + esc(C.pyRepr(e[1])) + '</span>, <span class="a">' + esc(C.pyRepr(e[2])) +
-        '</span>, <span class="d">' + esc(C.pyRepr(e[3])) + "</span>)</div>";
-    }).join("");
-    el.scrollTop = el.scrollHeight;
-  }
-
-  function renderCounters(el, sys) {
-    el.innerHTML = '<span>Failed logins (locks at 3):</span>' + Object.keys(C.USERS).map(function (u) {
-      if (!C.USERS[u][3]) return '<span class="ctr off">' + u + "</span>";
-      var f = sys.failCount(u), pips = "";
-      for (var i = 0; i < 3; i++) pips += '<span class="pip' + (i < f ? " on" : "") + '"></span>';
-      return '<span class="ctr' + (f >= 3 ? " bad" : "") + '">' + u + pips + (f >= 3 ? " LOCKED" : "") + "</span>";
-    }).join("");
-  }
-
-  function renderHash(el, sys) {
-    return sys.calculate_hash(sys.mission).then(function (cur) {
-      var match = cur === sys.trusted_hash;
-      el.innerHTML =
-        '<div class="hrow"><span class="hl">Trusted SHA-256</span><code>' + sys.trusted_hash.slice(0, 12) + "…</code></div>" +
-        '<div class="hrow"><span class="hl">Current SHA-256</span><code class="' + (match ? "ok" : "bad") + '">' + cur.slice(0, 12) +
-        '…</code><span class="pill ' + (match ? "ok" : "bad") + '">' + (match ? "✓ match" : "✖ MISMATCH") + "</span></div>" +
-        '<div class="canon">sha256(json.dumps(mission, sort_keys=True)) of <code>' + esc(C.pyDumps(sys.mission)) + "</code> · " + C.hashBackend() + "</div>";
-      return match;
-    });
-  }
+  // gate animation paced by the action queue (see pause)
+  function animateGates(el, tr, t) { return UI.animateGates(el, tr, function (ms) { return pause(ms, t); }); }
 
   function showAlert(on) { $("alert").hidden = !on; }
-
-  var CONTEXT = {
-    vuln: '<h3>Lab conditions (worksheet)</h3><ul><li>Shared ground-control accounts</li><li>No MFA</li>' +
-      '<li>Old accounts still active</li><li>Irregular firmware updates</li><li>Poor logging</li><li>Maintenance laptops connect straight to UAVs</li></ul>' +
-      '<div class="chain"><span>attacker</span><b>→</b><span>shared account, no MFA</span><b>→</b><span>mission plan</span><b>→</b>' +
-      '<span>unauthorized change</span><b>→</b><span class="end">crash or injury</span></div>',
-    secure: '<h3>Controls inside change()</h3><ul><li>Default-deny network rule</li><li>Individual accounts, lockout after 3</li>' +
-      '<li>Password + MFA</li><li>RBAC: pilots may not change altitude</li><li>SHA-256 integrity check</li><li>Every decision logged (UTC)</li></ul>' +
-      '<div class="chain"><span>pilot: destination, speed</span><span>manager: destination, altitude, speed</span></div>'
-  };
 
   /* ======================= CODE PANEL ======================= */
   // Shows the team's own Python (js/python-sources.js) and highlights the lines behind the current step.
@@ -224,50 +85,10 @@
   var splitStep = 0;
 
   /* ======================= VULNERABLE MODE ======================= */
-  // Mirrors attack_simulation.py: the program itself decides whether the attack worked.
-  var ATTACKER = { user: "operator", password: "shared-pass", mfa: "000000" };   // stolen shared credentials
-  var SHARED_ACCOUNTS = { operator: "shared-pass" };
-  function runVulnerableAttack() {
-    var original = C.copy(INITIAL), mission = C.copy(INITIAL);
-    var authenticated = SHARED_ACCOUNTS[ATTACKER.user] === ATTACKER.password;   // password only, no MFA
-    if (authenticated) { mission.destination = C.ATTACK.destination; mission.altitude = C.ATTACK.altitude; }
-    var changed = {};
-    Object.keys(mission).forEach(function (k) { if (mission[k] !== original[k]) changed[k] = [original[k], mission[k]]; });
-    return { authenticated: authenticated, mission: mission, changed: changed, attack_successful: Object.keys(changed).length > 0 };
-  }
-  var VULN = runVulnerableAttack();
+  // Ports of the two programs live in js/core.js; the tests compare them with the Python.
+  var ATTACKER = C.ATTACKER;
+  var VULN = C.runVulnerableAttack();
 
-  var HEADER_CODE = [["# Asset:", 2], ["# Vulnerability:", 2], ["# Threat:", 2], ["# Impact:", 2]];
-  var VSTAGES = [
-    { id: "intro", k: "The system", h: "UAV mission under normal operation",
-      b: "<p>Mission loaded: <b>POINT_A</b>, <b>100 m</b>, <b>10 m/s</b>. The UAV is en route and flies whatever the mission file says.</p>",
-      code: [["mission = {", 5], ["shared_accounts = ", 1]] },
-    { id: "analysis", k: "Security analysis", h: "Asset, threat, vulnerability, impact",
-      b: "<p>What we protect, who attacks it, and what goes wrong.</p>", code: HEADER_CODE },
-    { id: "chain", k: "Attack chain", h: "How the attack unfolds",
-      b: "<p>Threat → Vulnerability → Asset → Attack → Impact</p>", code: HEADER_CODE },
-    { id: "vuln", k: "Stage 1 of 5", h: "The vulnerability exists",
-      b: '<ul class="vlist"><li>Shared ground-control account</li><li>No MFA</li><li>No authorization check</li><li>No integrity check</li><li>No audit log</li><li>Old accounts still active</li></ul>',
-      code: [['print("VULNERABILITY', 1], ["shared_accounts = ", 1]] },
-    { id: "attempt", k: "Stage 2 of 5", h: "Attack attempted",
-      b: "<p>The attacker signs in with the <b>stolen shared operator account</b>. The operator gets an unexpected login notification, but nothing blocks the session.</p>",
-      code: [['print("ATTACK: assumed', 1], ["user, password =", 3]] },
-    { id: "success", k: "Stage 3 of 5", h: "Attack succeeds",
-      b: "<p>The request passes straight through: <b>destination → UNKNOWN_POINT</b>, <b>altitude → 30 m</b>. The UAV briefly loses its ground-station link and reroutes.</p>",
-      code: [["if authenticated:", 3]] },
-    { id: "asset", k: "Stage 4 of 5", h: "Asset affected: the mission plan",
-      b: "<p>Integrity is lost: the plan now says something nobody authorized.</p>",
-      code: [['print("MODIFIED MISSION', 1]] },
-    { id: "impact", k: "Stage 5 of 5", h: "Security impact",
-      b: "<p>The UAV flies to the wrong point, below the 45 m tower. <b>Possible collision → crash or injury.</b></p>",
-      code: [['print("ASSET: mission plan', 1]] },
-    { id: "result", k: "Attack result", h: "Did the attack succeed?",
-      b: "<p>The program compares the mission before and after and decides for itself.</p>",
-      code: [["# 6. [guide]", 4], ["# 7. [guide]", 14]] },
-    { id: "investigation", k: "After the incident", h: "Investigation",
-      b: "<p>The mission file is later found modified. What can the system tell us?</p>",
-      code: [['print("No automatic detection', 1]] }
-  ];
   var LAST_V = VSTAGES.length - 1;
   function vIndex(id) { for (var i = 0; i < VSTAGES.length; i++) if (VSTAGES[i].id === id) return i; }
   var ATTEMPT_AT = vIndex("attempt"), ATTACK_AT = vIndex("success"), HAZARD_AT = vIndex("impact");
@@ -291,17 +112,6 @@
       sc.status = { tone: "bad", text: "Inside the hazard zone below safe altitude: crash or injury possible" };
     }
     return sc;
-  }
-
-  function rowsTable(rows, cls) {
-    return '<table class="t ' + (cls || "") + '"><tbody>' + rows.map(function (r) {
-      return "<tr><td>" + r[0] + '</td><td class="' + (r[2] || "") + '">' + r[1] + "</td></tr>";
-    }).join("") + "</tbody></table>";
-  }
-  function changesText(changed) {
-    var ks = Object.keys(changed);
-    if (!ks.length) return "none";
-    return ks.map(function (k) { return esc(k) + ": " + esc(C.pyDumps(changed[k][0])) + " → " + esc(C.pyDumps(changed[k][1])); }).join("<br>");
   }
 
   function vulnExtra(id) {
@@ -436,38 +246,6 @@
   }
 
   /* ======================= SECURED MODE ======================= */
-  var PILOT = ["pilot01", "pilot-pass", "246810"];
-  var PRESETS = {
-    1: { kind: "attack", title: "The same attack, replayed",
-         lead: "Same attacker, same stolen shared credentials (<code>operator</code> / <code>shared-pass</code>), same two changes. Now every request has to go through <code>change()</code>.",
-         steps: [
-           { call: ["operator", "shared-pass", "000000", "destination", "UNKNOWN_POINT"], label: "Change 1 of 2: destination → UNKNOWN_POINT" },
-           { call: ["operator", "shared-pass", "000000", "altitude", 30], label: "Change 2 of 2: altitude → 30" },
-           { summary: true, label: "the attack result" }
-         ] },
-    2: { kind: "attack", title: "Stolen password, no MFA code", lead: "The attacker has pilot01's real password but not the MFA code.",
-         steps: [
-           { call: ["pilot01", "pilot-pass", "000000", "destination", "UNKNOWN_POINT"], label: "Attempt 1 of 4: guessed MFA code" },
-           { call: ["pilot01", "pilot-pass", "123456", "destination", "UNKNOWN_POINT"], label: "Attempt 2 of 4: guessed MFA code" },
-           { call: ["pilot01", "pilot-pass", "999999", "destination", "UNKNOWN_POINT"], label: "Attempt 3 of 4: third failure locks the account" },
-           { call: ["pilot01", "pilot-pass", "246810", "destination", "UNKNOWN_POINT"], label: "Attempt 4 of 4: correct password AND correct MFA code" }
-         ] },
-    3: { kind: "attack", title: "Old account", lead: "A former operator's account, used with its real credentials.",
-         steps: [{ call: ["old_operator", "old-pass", "111111", "destination", "UNKNOWN_POINT"] }] },
-    4: { kind: "misuse", title: "Pilot tries to change altitude", lead: "A real pilot with correct credentials, but pilots may not change altitude.",
-         steps: [{ call: PILOT.concat(["altitude", 30]) }] },
-    5: { kind: "legit", title: "Legitimate change", lead: "The real pilot reroutes to POINT_B. The system still works for authorized users.",
-         steps: [{ call: PILOT.concat(["destination", "POINT_B"]) }] },
-    6: { kind: "tamper", title: "Direct file tampering", lead: "Someone edits the mission file directly, bypassing <code>change()</code>.",
-         steps: [
-           { tamper: ["altitude", 30], label: 'Step 1 of 2: mission["altitude"] = 30, outside change()' },
-           { verify: true, label: "Step 2 of 2: the pre-flight verify()" }
-         ] },
-    7: { kind: "attack", title: "Maintenance laptop path", lead: "A compromised maintenance laptop sends a change, even with valid pilot credentials.",
-         steps: [{ call: PILOT.concat(["destination", "UNKNOWN_POINT", "maintenance"]) }] }
-  };
-  var SHORT = { 1: "Same attack", 2: "Stolen password", 3: "Old account", 4: "Pilot → altitude", 5: "Legit change", 6: "Tampering", 7: "Maintenance" };
-
   function secCaption(extraHint) {
     var kicker, h, lead, hint = "";
     if (sec.custom) {
@@ -532,13 +310,6 @@
   function showGatesView() {
     $("gates").hidden = false; $("request").hidden = false; $("extra").innerHTML = "";
   }
-  var GATE_CODE = {
-    1: [['if (source, "mission_data") not in allowed_paths:', 3]],
-    2: [["if not account or not account[3]", 3]],
-    3: [["if (password, mfa) != account[:2]:", 4]],
-    4: [["if field not in roles[account[2]]:", 3]],
-    5: [["if not verify():", 2], ["def verify():", 7]]
-  };
   function codeForTrace(tr) {
     var c = [["def change(", 1]];
     return c.concat(tr.ok ? [["if not verify():", 2], ["old_value = mission[field]", 5]] : GATE_CODE[tr.stoppedAt]);
@@ -673,17 +444,9 @@
   }
 
   /* ======================= SPLIT MODE ======================= */
-  var SPLIT_CAP = [
-    ["Same attack, two systems", "Stolen shared credentials, then destination → UNKNOWN_POINT and altitude → 30. Press → to launch."],
-    ["The attack lands", "Left: written straight into the mission. Right: stopped at the account gate and logged, twice."],
-    ["Outcome", "Left: collision risk, and nobody knows who did it. Right: the UAV reaches POINT_A, the attempt is on record."]
-  ];
   function secureFlyScene(pos, done) {
     return { uav: { x: pos.x, y: pos.y, alt: 100 }, paths: [{ a: P.GS, b: P.POINT_A, tone: "ok" }],
              status: { tone: "ok", text: done ? "Arrived at POINT_A · 100 m · mission intact" : "En route to POINT_A · 100 m · 10 m/s" } };
-  }
-  function outcomeTable(rows) {
-    return '<table class="t">' + rows.map(function (r) { return "<tr><td>" + r[0] + '</td><td class="yn ' + r[1] + '">' + r[2] + "</td></tr>"; }).join("") + "</table>";
   }
   function renderSplit(t) {
     var s = splitStep;

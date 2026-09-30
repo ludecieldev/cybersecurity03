@@ -1,5 +1,5 @@
 /* ==========================================================================
-   CORE LOGIC: a 1:1 port of secure_solution.py (Team T4, Case 3).
+   CORE LOGIC: ports of secure_solution.py and attack_simulation.py (Team T4, Case 3).
    No DOM access here, so tests/core.test.js can load it in Node with require().
    ========================================================================== */
 var UAVCore = (function () {
@@ -270,9 +270,27 @@ var UAVCore = (function () {
     return sys;
   }
 
+  /* ---- the vulnerable system: a port of attack_simulation.py ----
+          tests/core.test.js runs the Python next to this and compares the results. */
+  var SHARED_ACCOUNTS = { operator: "shared-pass" };   // one shared account for the whole team
+  var ATTACKER = { user: "operator", password: "shared-pass", mfa: "000000" };   // stolen shared credentials
+
+  function runVulnerableAttack() {
+    var original = copy(INITIAL_MISSION), mission = copy(INITIAL_MISSION);
+    var authenticated = own(SHARED_ACCOUNTS, ATTACKER.user) && SHARED_ACCOUNTS[ATTACKER.user] === ATTACKER.password;   // password only, no MFA
+    if (authenticated) {   // nothing else is checked after login
+      mission.destination = ATTACK.destination;
+      mission.altitude = ATTACK.altitude;
+    }
+    var changed = {};
+    Object.keys(mission).forEach(function (k) { if (mission[k] !== original[k]) changed[k] = [original[k], mission[k]]; });
+    return { authenticated: authenticated, mission: mission, changed: changed, attack_successful: Object.keys(changed).length > 0 };
+  }
+
   return {
     INITIAL_MISSION: INITIAL_MISSION, USERS: USERS, ROLES: ROLES, ALLOWED_PATHS: ALLOWED_PATHS,
     LOCKOUT_THRESHOLD: LOCKOUT_THRESHOLD, ATTACK: ATTACK,
+    SHARED_ACCOUNTS: SHARED_ACCOUNTS, ATTACKER: ATTACKER, runVulnerableAttack: runVulnerableAttack,
     pyDumps: pyDumps, pyRepr: pyRepr, sha256Hex: sha256Hex, sha256Js: sha256Js, utf8Bytes: utf8Bytes,
     hashBackend: function () { return hashBackend; },
     createSecureSystem: createSecureSystem, copy: copy
